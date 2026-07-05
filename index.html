@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>アマモ健康チェック</title>
+<meta name="description" content="質問に答えるとアマモの状態を枯死スコア0〜3で判定する問診式ツール" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>html,body,#root{height:100%;margin:0;}body{background:#F5F2E9;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+
+// ===== 配色（アマモ／海の底のパレット） =====
+const C = {
+  water: "#0E3B43",
+  grass: "#4A7C59",
+  grassLt: "#6B9E78",
+  sand: "#D9C9A8",
+  bg: "#F5F2E9",
+  card: "#FFFFFF",
+  ink: "#20302E",
+  sub: "#5E6B66",
+  alert: "#C7522A",
+  line: "#E4DFCF",
+};
+
+// ===== 質問・配点（原文の配点を尊重。point=健康度、高いほど健全） =====
+// critical:true の選択肢を選ぶと、合計点に関係なく「枯死に近い(スコア3)」と判定。
+const QUESTIONS = [
+  {
+    id: "q1",
+    q: "葉の枚数を教えてください（枯れたものは含まない）。",
+    options: [
+      { label: "1枚", point: 0, note: "多くは枯れる寸前。生き返るものもいるが少ない" },
+      { label: "2枚", point: 2, note: "アマモにしては少ない。注意が必要" },
+      { label: "3枚", point: 3, note: "よく見られる普通の状態" },
+      { label: "4枚以上", point: 5, note: "非常に良く、葉は元気" },
+    ],
+  },
+  {
+    id: "q2",
+    q: "根茎の状態を教えてください。",
+    options: [
+      { label: "どこも硬い", point: 5, note: "非常に状態がいい" },
+      { label: "根茎全体がぶよぶよ", point: 0, critical: true, note: "ほとんど枯死。他の点が高くても枯れる直前と診断" },
+      { label: "根茎の後方一部のみぶよぶよ", point: 1, note: "長い根茎によく見られる。半分以下なら注意は小さい" },
+    ],
+  },
+  {
+    id: "q3",
+    q: "根茎の長さを教えてください。",
+    options: [
+      { label: "2cm未満", point: 0, note: "" },
+      { label: "5cm未満", point: 5, note: "" },
+      { label: "5cm以上〜8cm未満", point: 2, note: "" },
+      { label: "8cm以上", point: 3, note: "" },
+    ],
+  },
+  {
+    id: "q4",
+    q: "根茎の匂いを教えてください。",
+    options: [
+      { label: "無臭", point: 5, note: "健全。硫化水素は発生していないと思われる" },
+      { label: "磯臭い（海水臭）", point: 4, note: "ほぼ無臭の誤認だが念のため" },
+      { label: "腐ったゆで卵の強い匂い（硫化臭）", point: 0, note: "ほとんどの場合、根が腐っている。大丈夫な場合もある" },
+      { label: "薄い腐ったゆで卵の匂い", point: 1, note: "一部の根が腐っている。問題ないケースもある" },
+    ],
+  },
+  {
+    id: "q5",
+    q: "新芽を軽く引き抜こうとしてみてください。",
+    options: [
+      { label: "簡単に根元から引き抜ける・根本がドロドロ", point: 0, critical: true, note: "絶対に復活しない" },
+      { label: "引き抜けない", point: 2, note: "とりあえず問題ない" },
+    ],
+  },
+  {
+    id: "q6",
+    q: "葉の基部に、葉を横断する大きな黒い模様はありますか？",
+    options: [
+      { label: "ある", point: 1, note: "問題ないことが多いが枯れるケースも。小さい株は枯れやすく、大きい株はまず枯れない" },
+      { label: "ない", point: 2, note: "問題ない" },
+    ],
+  },
+  {
+    id: "q7",
+    q: "アマモに新芽はありますか？",
+    options: [
+      { label: "ある", point: 2, note: "普通はある" },
+      { label: "ない", point: 1, note: "枯れの前兆の可能性があるが、時と場合による" },
+    ],
+  },
+  {
+    id: "q8",
+    q: "アマモの葉の最大の長さを教えてください。",
+    options: [
+      { label: "3cm以下", point: 0, note: "非常にまずい状態で、枯れるケースが多い" },
+      { label: "3cm超〜6cm以下", point: 2, note: "すぐ枯れないが、硫化水素ダメージを受けやすい" },
+      { label: "6cm超〜15cm以下", point: 4, note: "大丈夫" },
+      { label: "15cm以上", point: 5, note: "非常にいい" },
+    ],
+  },
+  {
+    id: "q9",
+    q: "アマモの根の状態を教えてください。",
+    options: [
+      { label: "根なし", point: 1, note: "状態が良ければすぐ生える" },
+      { label: "黒い・色抜けのふにゃふにゃな根", point: 1, note: "状態が良ければすぐ生える" },
+      { label: "白く艶のある根", point: 5, note: "大丈夫" },
+      { label: "株元にわずかな新根", point: 4, note: "大丈夫な場合が多い" },
+    ],
+  },
+  {
+    id: "q10",
+    q: "内側から2枚目の葉の色を教えてください（葉が1枚しかない場合は「葉の全体が枯死」を選択）。",
+    options: [
+      { label: "枯れは一切ない", point: 5, note: "非常にいい状態" },
+      { label: "葉の先端・縁にわずかな枯れ", point: 3, note: "大丈夫だと思うが注意が必要" },
+      { label: "葉の半分以上の枯れ", point: 2, note: "かなり注意が必要" },
+      { label: "葉の全体が枯死", point: 0, note: "枯死することもある" },
+    ],
+  },
+];
+
+const MAX_POINT = QUESTIONS.reduce(
+  (s, q) => s + Math.max(...q.options.map((o) => o.point)),
+  0
+); // = 44
+
+function toDeathScore(total) {
+  const r = total / MAX_POINT;
+  if (r >= 0.8) return 0;
+  if (r >= 0.53) return 1;
+  if (r >= 0.27) return 2;
+  return 3;
+}
+
+const SCORE_INFO = {
+  0: { label: "スコア 0 ・ 健全", color: C.grass, comment: "全体的に健康な状態です。現状の管理を続けましょう。" },
+  1: { label: "スコア 1 ・ 軽度の衰退", color: C.grassLt, comment: "一部に弱りの兆候。早めの環境チェックがおすすめです。" },
+  2: { label: "スコア 2 ・ 中度の衰退", color: C.sand, comment: "はっきりした衰退。底床や硫化水素など要因の確認を。" },
+  3: { label: "スコア 3 ・ 枯死に近い", color: C.alert, comment: "危険な状態です。株の隔離・環境改善を急いでください。" },
+};
+
+function AmamoHealthCheck() {
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [records, setRecords] = useState([]);
+
+  const N = QUESTIONS.length;
+  const isResult = step >= N;
+
+  const total = useMemo(
+    () =>
+      QUESTIONS.reduce((s, q) => {
+        const idx = answers[q.id];
+        return s + (idx != null ? q.options[idx].point : 0);
+      }, 0),
+    [answers]
+  );
+
+  // 強制枯死判定（critical選択肢が1つでもあればスコア3）
+  const criticalHit = useMemo(
+    () =>
+      QUESTIONS.some((q) => {
+        const idx = answers[q.id];
+        return idx != null && q.options[idx].critical;
+      }),
+    [answers]
+  );
+
+  const death = criticalHit ? 3 : toDeathScore(total);
+  const info = SCORE_INFO[death];
+
+  function choose(qid, idx) {
+    setAnswers((a) => ({ ...a, [qid]: idx }));
+  }
+  function next() {
+    if (step < N && answers[QUESTIONS[step].id] == null) return;
+    setStep((s) => s + 1);
+  }
+  function back() {
+    setStep((s) => Math.max(0, s - 1));
+  }
+  function restart() {
+    setStep(0);
+    setAnswers({});
+  }
+  function saveRecord() {
+    const now = new Date();
+    const stamp = `${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    setRecords((r) => [{ time: stamp, total, death, label: info.label }, ...r]);
+  }
+  function copyResult() {
+    const lines = [
+      `【アマモ健康チェック結果】`,
+      `合計ポイント: ${total} / ${MAX_POINT}`,
+      criticalHit ? `※重症サインあり（強制的に枯死判定）` : ``,
+      `判定: ${info.label}`,
+      ...QUESTIONS.map((q) => {
+        const idx = answers[q.id];
+        return `・${q.q} → ${idx != null ? q.options[idx].label : "未回答"}`;
+      }),
+    ].filter(Boolean).join("\n");
+    navigator.clipboard?.writeText(lines);
+  }
+
+  const progress = Math.round((Math.min(step, N) / N) * 100);
+  const curQ = !isResult ? QUESTIONS[step] : null;
+
+  return (
+    <div style={{ background: C.bg, minHeight: "100%", color: C.ink }} className="w-full">
+      <div className="mx-auto max-w-xl px-5 py-8">
+        <div className="mb-6">
+          <div style={{ color: C.grass }} className="text-xs font-semibold tracking-widest uppercase mb-1">
+            Seagrass Health Check
+          </div>
+          <h1 style={{ color: C.water }} className="text-2xl font-bold leading-tight">
+            アマモ健康チェック
+          </h1>
+          <p style={{ color: C.sub }} className="text-sm mt-1">
+            10の質問に答えると、枯死スコア0〜3で状態を判定します（叩き台版）
+          </p>
+        </div>
+
+        <div className="mb-6">
+          <div style={{ background: C.line }} className="h-2 w-full rounded-full overflow-hidden">
+            <div style={{ background: C.grass, width: `${progress}%` }} className="h-full transition-all duration-300" />
+          </div>
+          <div style={{ color: C.sub }} className="text-xs mt-1 text-right">
+            {Math.min(step, N)} / {N}
+          </div>
+        </div>
+
+        {!isResult && (
+          <div style={{ background: C.card, borderColor: C.line }} className="rounded-2xl border p-6 shadow-sm">
+            <div style={{ color: C.grass }} className="text-xs font-semibold mb-2">
+              質問 {step + 1}
+            </div>
+            <h2 className="text-lg font-bold mb-5 leading-snug">{curQ.q}</h2>
+
+            <div className="space-y-3">
+              {curQ.options.map((o, i) => {
+                const active = answers[curQ.id] === i;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => choose(curQ.id, i)}
+                    style={{
+                      borderColor: active ? (o.critical ? C.alert : C.grass) : C.line,
+                      background: active ? (o.critical ? C.alert : C.grass) : C.card,
+                      color: active ? "#fff" : C.ink,
+                    }}
+                    className="w-full text-left rounded-xl border-2 px-4 py-3 flex items-center gap-3 transition-colors"
+                  >
+                    <span
+                      style={{
+                        borderColor: active ? "#fff" : C.sand,
+                        background: active ? "#fff" : "transparent",
+                      }}
+                      className="inline-flex h-5 w-5 flex-none items-center justify-center rounded border-2"
+                    >
+                      {active && (
+                        <span style={{ color: o.critical ? C.alert : C.grass }} className="text-sm font-bold leading-none">✓</span>
+                      )}
+                    </span>
+                    <span className="font-medium">{o.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 flex items-center justify-between">
+              <button
+                onClick={back}
+                disabled={step === 0}
+                style={{ color: step === 0 ? C.line : C.sub }}
+                className="text-sm font-medium disabled:cursor-not-allowed"
+              >
+                ← 戻る
+              </button>
+              <button
+                onClick={next}
+                disabled={answers[curQ.id] == null}
+                style={{ background: answers[curQ.id] == null ? C.line : C.water, color: "#fff" }}
+                className="rounded-xl px-6 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed"
+              >
+                {step === N - 1 ? "結果を見る" : "次へ"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isResult && (
+          <div className="space-y-4">
+            <div style={{ background: C.card, borderColor: C.line }} className="rounded-2xl border p-6 shadow-sm text-center">
+              <div style={{ color: C.sub }} className="text-sm mb-3">判定結果</div>
+              <div
+                style={{ background: info.color, color: death === 2 ? C.ink : "#fff" }}
+                className="inline-block rounded-full px-5 py-2 text-lg font-bold mb-3"
+              >
+                {info.label}
+              </div>
+              <p style={{ color: C.ink }} className="text-sm leading-relaxed mb-2">
+                {info.comment}
+              </p>
+              {criticalHit && (
+                <p style={{ color: C.alert }} className="text-xs font-semibold mb-2">
+                  ※重症サイン（根茎全体のぶよぶよ／ドロドロで引き抜け）を検出したため、合計点に関わらず枯死判定にしています。
+                </p>
+              )}
+              <div style={{ color: C.sub }} className="text-xs">
+                合計ポイント {total} / {MAX_POINT}
+              </div>
+            </div>
+
+            <div style={{ background: C.card, borderColor: C.line }} className="rounded-2xl border p-5 shadow-sm">
+              <div style={{ color: C.grass }} className="text-xs font-semibold mb-3">回答の内訳</div>
+              <ul className="space-y-2">
+                {QUESTIONS.map((q) => {
+                  const idx = answers[q.id];
+                  const crit = idx != null && q.options[idx].critical;
+                  return (
+                    <li key={q.id} className="flex items-start justify-between gap-3 text-sm">
+                      <span style={{ color: C.sub }} className="flex-1">{q.q}</span>
+                      <span style={{ color: crit ? C.alert : C.ink }} className="font-semibold flex-none text-right">
+                        {idx != null ? q.options[idx].label : "—"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div style={{ background: C.card, borderColor: C.line }} className="rounded-2xl border p-5 shadow-sm">
+              <div style={{ color: C.grass }} className="text-xs font-semibold mb-3">選んだ項目の解説</div>
+              <ul className="space-y-3">
+                {QUESTIONS.map((q) => {
+                  const idx = answers[q.id];
+                  if (idx == null || !q.options[idx].note) return null;
+                  const o = q.options[idx];
+                  return (
+                    <li key={q.id} className="text-sm">
+                      <span style={{ color: o.critical ? C.alert : C.ink }} className="font-semibold block">
+                        {o.label}
+                      </span>
+                      <span style={{ color: C.sub }} className="text-xs block mt-0.5 leading-snug">
+                        {o.note}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={copyResult} style={{ borderColor: C.water, color: C.water }} className="rounded-xl border-2 px-4 py-2.5 text-sm font-bold">
+                結果をコピー
+              </button>
+              <button onClick={saveRecord} style={{ background: C.grass, color: "#fff" }} className="rounded-xl px-4 py-2.5 text-sm font-bold">
+                記録に残す
+              </button>
+            </div>
+            <button onClick={restart} style={{ color: C.sub }} className="w-full text-sm font-medium py-2">
+              もう一度チェックする
+            </button>
+
+            {records.length > 0 && (
+              <div style={{ background: C.card, borderColor: C.line }} className="rounded-2xl border p-5 shadow-sm">
+                <div style={{ color: C.grass }} className="text-xs font-semibold mb-3">今回のセッション記録</div>
+                <ul className="space-y-2">
+                  {records.map((r, i) => (
+                    <li key={i} className="flex items-center justify-between text-sm">
+                      <span style={{ color: C.sub }}>{r.time}</span>
+                      <span className="font-semibold">{r.label}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p style={{ color: C.sub }} className="text-xs mt-3 leading-relaxed">
+                  ※記録はこの画面を開いている間だけ保持されます。残す場合は「結果をコピー」でメモ等に貼り付けてください。
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <p style={{ color: C.sub }} className="text-xs mt-6 leading-relaxed">
+          配点・換算は仮の叩き台です。実際にどの状態が枯死したかの観察データと照らして調整してください。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<AmamoHealthCheck />);
+</script>
+</body>
+</html>
