@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://amamo-check.github.io/amamo-check/sitemap.xml
